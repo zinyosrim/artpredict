@@ -1,14 +1,9 @@
-import dateparser
 import re
 import scrapy
-
-from artcrawler.items import Lot
-from artcrawlerHelper import number_of_exhibitions_in_major_museums
-from artcrawlerHelper import strip_accents
+import logging
+from artcrawler.items import ChristiesLot
 from artcrawlerHelper import year_month_iterator
-from artcrawlerHelper import parseHelper_created_year
-from artcrawlerHelper import parseHelper_style
-from artcrawlerHelper import conversion_to_cm_factor
+from artcrawlerHelper import strip_accents
 from datetime import datetime, date, time, timedelta
 from scrapy.http import TextResponse
 from scrapy.loader import ItemLoader
@@ -18,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import TimeoutException
 
-class QuotesSpider(scrapy.Spider):
+class ChristiesSpider(scrapy.Spider):
     name = "christies"
     allowed_domains = ["christies.com"]
 
@@ -31,16 +26,24 @@ class QuotesSpider(scrapy.Spider):
         urls = []
         for year, month in year_month_iterator( 1, 1998, 12, 2005 ):
             urls.append(self.domain + "/results/?month=" + str(month) + "&year=" + str(year) + "&locations=&scids=&pg=1&action=&initialpageload=false" ) 
-        for year, month in year_month_iterator( 1, 2006, 7, 2017 ):
-            urls.append(self.domain + "/results/?month=" + str(month) + "&year=" + str(year) + "&locations=&scids=5|7|11|17&pg=1&action=&initialpageload=false" )      
+        #for year, month in year_month_iterator( 1, 2006, 8, 2017 ):
+        #    urls.append(self.domain + "/results/?month=" + str(month) + "&year=" + str(year) + "&locations=&scids=5|7|11|17&pg=1&action=&initialpageload=false" )      
+        
         for url in urls:
             yield scrapy.Request(url=url, callback=self.parse_past_auction_results_page)
+            logging.info("ArtCrawler will crawl "+ url)
+
+        logging.info("ArtCrawler built list of Auction URLs for Christie's!")
 
     def parse_past_auction_results_page(self, response):   
+        # Parse a Christie's page with links to past auctions and yield past auction URLs
+
         for url in response.xpath("//ul[@class='auction-links']/li/a/@href"):
             yield scrapy.Request(url="http://christies.com" + url.extract(), callback=self.parse_past_auction_sale_lots_page)
     
-    def parse_past_auction_sale_lots_page(self, response):                   
+    def parse_past_auction_sale_lots_page(self, response):
+        # Parse a Christie's auction summary page with links to lots and yield lot URLs
+
         self.driver.get(response.url)
         element = WebDriverWait(self.driver, self.delay).until(EC.presence_of_element_located((By.CLASS_NAME, "load-all")))
 
@@ -58,13 +61,15 @@ class QuotesSpider(scrapy.Spider):
             yield scrapy.Request(url=url.extract(), callback=self.parse_lot)
 
     def parse_lot(self, response):
+        # Parse a Christie's auction lot page
         
-        lot = ItemLoader(item=Lot(), response=response)
+        lot = ItemLoader(item=ChristiesLot(), response=response)
+        lot.default_output_processor = TakeFirst()
 
         lot.add_value("auction_house_name", "Christie's")
         lot.add_value("sale_id", response.xpath('//*[@id="main_center_0_lnkSaleNumber"]/text()').extract_first())
         lot.add_value("sale_title", strip_accents(response.xpath('//*[@id="main_center_0_lblSaleTitle"]/text()').extract_first()))
-        lot.add_value("sale_date", dateparser.parse(response.xpath('//*[@id="main_center_0_lblSaleDate"]/text()').extract_first()).date().isoformat())
+        lot.add_value("sale_date", response.xpath('//*[@id="main_center_0_lblSaleDate"]/text()').extract_first())
         lot.add_value("sale_location", response.xpath('//*[@id="main_center_0_lblSaleLocation"]/text()').extract_first())
         lot.add_value("lot_id", response.xpath('//*[@id="main_center_0_lblLotNumber"]/text()').extract_first())
         lot.add_value("artist_name", response.xpath('//*[@id="main_center_0_lblLotPrimaryTitle"]/text()').extract_first())
@@ -93,6 +98,8 @@ class QuotesSpider(scrapy.Spider):
         yield lot.load_item()
     
     def closed(self, reason):
+        # close browser window
+
         self.driver.close()
 
 
